@@ -358,7 +358,8 @@ class App(tk.Tk):
         return f"{template}.{ext}"
 
 if __name__ == "__main__":
-    style = ttk.Style()
-    style.configure("Accent.TButton", font=("Helvetica", 10, "bold"))
     app = App()
+    style = ttk.Style(app)
+    # You can set a theme here if you have one, e.g., app.tk.call("source", "azure.tcl"); style.theme_use("azure-dark")
+    style.configure("Accent.TButton", font=("Helvetica", 10, "bold"), padding=5)
     app.mainloop()
