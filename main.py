@@ -14,13 +14,14 @@ CONFIG_FILE = "settings.json"
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("YouTube 影片下載器 v1.2 (One-Click)")
+        self.title("YouTube 影片下載器 v1.3 (Robust)")
         self.geometry("800x650")
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # --- App State ---
         self.worker_queue = queue.Queue()
         self.stop_requested = threading.Event()
+        self.last_downloaded_info = None # To store info from progress hook
 
         # --- UI Variables ---
         self.output_path = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Videos"))
@@ -62,7 +63,6 @@ class App(tk.Tk):
         settings_frame.pack(fill=tk.X, padx=5, pady=5)
         settings_frame.columnconfigure(1, weight=1)
 
-        # ... (Layout for all settings widgets) ...
         ttk.Label(settings_frame, text="輸出資料夾:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.output_entry = ttk.Entry(settings_frame, textvariable=self.output_path)
         self.output_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
@@ -91,7 +91,6 @@ class App(tk.Tk):
         ttk.Radiobutton(mode_frame, text="只中文", variable=self.mode_var, value="chinese").pack(side=tk.LEFT, padx=10)
         ttk.Radiobutton(mode_frame, text="只原音", variable=self.mode_var, value="original").pack(side=tk.LEFT, padx=10)
 
-        # --- Advanced Settings Frame ---
         adv_frame = ttk.LabelFrame(settings_frame, text="進階")
         adv_frame.grid(row=4, column=0, columnspan=3, sticky=tk.EW, padx=5, pady=5)
         adv_frame.columnconfigure(1, weight=1)
@@ -99,7 +98,6 @@ class App(tk.Tk):
         adv_row2 = ttk.Frame(adv_frame); adv_row2.pack(fill=tk.X, padx=5, pady=2); ttk.Checkbutton(adv_row2, text="Cookies", variable=self.cookies_var, command=self.toggle_adv_options).pack(side=tk.LEFT); self.cookie_entry = ttk.Entry(adv_row2, textvariable=self.cookie_file_path, state='disabled'); self.cookie_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5); self.cookie_button = ttk.Button(adv_row2, text="選擇檔案", state='disabled', command=self.select_cookie_file); self.cookie_button.pack(side=tk.LEFT)
         adv_row3 = ttk.Frame(adv_frame); adv_row3.pack(fill=tk.X, padx=5, pady=2); ttk.Checkbutton(adv_row3, text="Proxy", variable=self.proxy_var, command=self.toggle_adv_options).pack(side=tk.LEFT); self.proxy_entry = ttk.Entry(adv_row3, textvariable=self.proxy_address, state='disabled'); self.proxy_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(22,5))
 
-        # --- Download Controls ---
         download_frame = ttk.Frame(main_frame)
         download_frame.pack(fill=tk.X, padx=5, pady=10)
         self.start_button = ttk.Button(download_frame, text="開始下載", command=self.start_download_thread, style="Accent.TButton")
@@ -107,44 +105,30 @@ class App(tk.Tk):
         self.stop_button = ttk.Button(download_frame, text="中止", state=tk.DISABLED, command=self.request_stop)
         self.stop_button.pack(side=tk.LEFT, ipady=5, padx=(10,0))
 
-        # --- Progress & Log ---
         progress_frame = ttk.Frame(main_frame); progress_frame.pack(fill=tk.X, padx=5, pady=0); self.progress_bar = ttk.Progressbar(progress_frame, orient='horizontal', mode='determinate'); self.progress_bar.pack(fill=tk.X, expand=True, pady=2); self.progress_label = ttk.Label(progress_frame, text="進度: 0%"); self.progress_label.pack(fill=tk.X, padx=5, pady=2)
         log_frame = ttk.LabelFrame(main_frame, text="日誌"); log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=10); self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def setup_context_menus(self):
-        # This can be a separate class as before, but for simplicity in one file:
-        widgets_with_menu = [self.url_entry, self.output_entry, self.quality_limit_entry, self.concurrent_entry, self.rate_limit_entry, self.log_text, self.cookie_entry, self.proxy_entry]
-        for widget in widgets_with_menu:
-            self.create_context_menu(widget)
+        widgets = [self.url_entry, self.output_entry, self.quality_limit_entry, self.concurrent_entry, self.rate_limit_entry, self.log_text, self.cookie_entry, self.proxy_entry]
+        for widget in widgets: self.create_context_menu(widget)
 
     def create_context_menu(self, widget):
         menu = tk.Menu(widget, tearoff=0)
-        menu.add_command(label="剪下", command=lambda: widget.event_generate('<<Cut>>'), accelerator="Ctrl+X")
-        menu.add_command(label="複製", command=lambda: widget.event_generate('<<Copy>>'), accelerator="Ctrl+C")
-        menu.add_command(label="貼上", command=lambda: widget.event_generate('<<Paste>>'), accelerator="Ctrl+V")
-        menu.add_separator()
-        menu.add_command(label="全選", command=lambda: widget.event_generate('<<SelectAll>>'), accelerator="Ctrl+A")
-
+        menu.add_command(label="剪下", command=lambda: widget.event_generate('<<Cut>>'), accelerator="Ctrl-X")
+        menu.add_command(label="複製", command=lambda: widget.event_generate('<<Copy>>'), accelerator="Ctrl-C")
+        menu.add_command(label="貼上", command=lambda: widget.event_generate('<<Paste>>'), accelerator="Ctrl-V")
+        menu.add_separator(); menu.add_command(label="全選", command=lambda: widget.event_generate('<<SelectAll>>'), accelerator="Ctrl-A")
         if isinstance(widget, scrolledtext.ScrolledText):
-            menu.add_separator()
-            menu.add_command(label="複製全部", command=lambda: self.copy_all_from_log())
-            menu.add_command(label="另存日誌...", command=lambda: self.save_log())
-
+            menu.add_separator(); menu.add_command(label="複製全部", command=self.copy_all_from_log); menu.add_command(label="另存日誌...", command=self.save_log)
         widget.bind("<Button-3>", lambda e: self.show_context_menu(e, menu, widget))
 
     def show_context_menu(self, event, menu, widget):
         has_selection = False
-        try:
-            has_selection = bool(widget.selection_get())
-        except tk.TclError:
-            pass
-        can_paste = bool(self.clipboard_get())
-        is_editable = widget.cget('state') == 'normal'
-        menu.entryconfig("剪下", state='normal' if has_selection and is_editable else 'disabled')
-        menu.entryconfig("複製", state='normal' if has_selection else 'disabled')
-        menu.entryconfig("貼上", state='normal' if can_paste and is_editable else 'disabled')
-        menu.tk_popup(event.x_root, event.y_root)
+        try: has_selection = bool(widget.selection_get())
+        except tk.TclError: pass
+        can_paste = bool(self.clipboard_get()); is_editable = widget.cget('state') == 'normal'
+        menu.entryconfig("剪下", state='normal' if has_selection and is_editable else 'disabled'); menu.entryconfig("複製", state='normal' if has_selection else 'disabled'); menu.entryconfig("貼上", state='normal' if can_paste and is_editable else 'disabled'); menu.tk_popup(event.x_root, event.y_root)
 
     def copy_all_from_log(self): self.clipboard_clear(); self.clipboard_append(self.log_text.get('1.0', 'end-1c'))
     def save_log(self):
@@ -188,14 +172,7 @@ class App(tk.Tk):
     def set_ui_state(self, state): self.after(0, lambda: self._set_ui_state_thread_safe(state))
     def _set_ui_state_thread_safe(self, state):
         is_disabled = state == 'disabled'
-        for child in self.winfo_children():
-            if hasattr(child, 'winfo_children'):
-                for widget in child.winfo_children():
-                    if isinstance(widget, (ttk.Button, ttk.Entry, ttk.Radiobutton, ttk.Checkbutton)):
-                        widget.config(state=state)
-        self.start_button.config(state='disabled' if is_disabled else 'normal')
-        self.stop_button.config(state='normal' if is_disabled else 'disabled')
-        if not is_disabled: self.toggle_adv_options()
+        self.start_button.config(state='disabled' if is_disabled else 'normal'); self.txt_button.config(state='disabled' if is_disabled else 'normal'); self.stop_button.config(state='normal' if is_disabled else 'disabled')
     def request_stop(self): self.log("收到中止請求...完成當前任務後將會停止。"); self.stop_requested.set()
 
     def start_download_thread(self):
@@ -219,62 +196,48 @@ class App(tk.Tk):
             self.log(f"--- ({i+1}/{len(urls)}) 開始處理 URL: {url} ---")
             try:
                 with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
-                    info = ydl.extract_info(url, download=False)
-
-                video_list = info['entries'] if info.get('_type') == 'playlist' else [info]
-                if info.get('_type') == 'playlist': self.log(f"偵測到播放清單 '{info.get('title')}'，共 {len(video_list)} 個影片。")
-
-                for video_info in video_list:
+                    info = ydl.extract_info(url, download=False, process=False) # Use process=False for playlists
+                video_list = info.get('entries', [info])
+                if 'entries' in info: self.log(f"偵測到播放清單 '{info.get('title')}'，共 {len(video_list)} 個影片。")
+                for video_entry in video_list:
                     if self.stop_requested.is_set(): self.log("任務已中止。"); break
-                    self.download_single_video(video_info)
+                    self.download_single_video(video_entry)
             except Exception as e:
                 self.worker_queue.put({'type': 'error', 'data': e, 'url': url})
         self.worker_queue.put({'type': 'task_finished'})
 
-    def download_single_video(self, video_info):
+    def download_single_video(self, video_entry):
         try:
-            self.log(f"分析影片: {video_info.get('title', video_info.get('id'))}")
-            # Playlist entries are shallow, so we need to re-extract to get all formats.
-            if 'formats' not in video_info:
-                with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
-                    video_info = ydl.extract_info(video_info['url'], download=False)
+            self.log(f"分析影片: {video_entry.get('title') or video_entry.get('id')}")
+            with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
+                full_info = ydl.extract_info(video_entry.get('url') or video_entry.get('webpage_url'), download=False)
 
-            video_format = self.find_best_video_format(video_info)
-            if not video_format: self.log(f"找不到適合的影像格式，已略過。"); return
-
-            tasks = self.prepare_download_tasks(video_info)
+            tasks = self.prepare_download_tasks(full_info)
             if not tasks: self.log(f"找不到符合設定的音軌，已略過。"); return
 
-            self.download_and_merge(video_format, tasks, video_info)
+            self.download_and_merge(tasks, full_info)
         except Exception as e:
-            self.worker_queue.put({'type': 'error', 'data': e, 'url': video_info.get('webpage_url')})
+            self.worker_queue.put({'type': 'error', 'data': e, 'url': video_entry.get('webpage_url')})
 
-    def find_best_video_format(self, info):
-        videos = [f for f in info.get('formats', []) if f.get('vcodec') != 'none' and f.get('acodec') == 'none']
-        # Add a preference for mp4
-        videos.sort(key=lambda x: (int(x.get('height', 0)), x.get('fps', 0), 1 if 'mp4' in x.get('ext','') else 0), reverse=True)
-
+    def build_video_format_selector(self):
+        selector = "bestvideo"
         if self.quality_var.get() == 'limit' and self.quality_limit.get().isdigit():
             limit = int(self.quality_limit.get())
-            videos = [v for v in videos if v.get('height', 0) <= limit]
+            selector += f"[height<={limit}]"
 
-        h264_videos = [v for v in videos if 'avc' in v.get('vcodec', '')]
-        return h264_videos[0] if h264_videos else (videos[0] if videos else None)
+        # Prioritize H.264, fallback to any best video
+        return f"{selector}[vcodec^=avc]/{selector}"
 
     def prepare_download_tasks(self, info):
         all_audios = [f for f in info.get('formats', []) if f.get('acodec') != 'none']
         audio_id_zh, audio_id_orig = None, None
-
-        # FIX: Use `x.get('abr') or 0` to prevent TypeError with None values
         hant_audios = [a for a in all_audios if str(a.get('language')).lower().startswith('zh-hant')]
         if hant_audios: audio_id_zh = max(hant_audios, key=lambda x: x.get('abr') or 0).get('format_id')
         if not audio_id_zh:
             hans_audios = [a for a in all_audios if str(a.get('language')).lower().startswith('zh-hans')]
             if hans_audios: audio_id_zh = max(hans_audios, key=lambda x: x.get('abr') or 0).get('format_id')
-
-        orig_audios = [a for a in all_audios if a.get('is_original')]
+        orig_audios = [a for a in all_audios if a.get('is_original')];
         if orig_audios: audio_id_orig = max(orig_audios, key=lambda x: x.get('abr') or 0).get('format_id')
-
         tasks, output_mode = [], self.mode_var.get()
         if output_mode in ['both', 'chinese']:
             if audio_id_zh: tasks.append({'audio_id': audio_id_zh, 'lang_tag': 'zh-Hant', 'suffix': '(中文)'})
@@ -284,24 +247,35 @@ class App(tk.Tk):
             else: self.log(f"警告: 影片 '{info.get('title')}' 找不到原聲音軌。")
         return tasks
 
-    def download_and_merge(self, video_format, tasks, base_info):
+    def download_and_merge(self, tasks, base_info):
         tmp_files = []
         try:
-            video_path = os.path.join(self.output_path.get(), f"__temp_video.{video_format['ext']}")
+            video_format_selector = self.build_video_format_selector()
+            self.last_downloaded_info = None # Reset before download
+
+            # Download Video using selector
+            self.log(f"開始下載最佳影像 for '{base_info.get('title')}'")
+            self._download_stream(video_format_selector, "__temp_video", base_info['webpage_url'])
+
+            if not self.last_downloaded_info:
+                raise Exception("無法從 yt-dlp progress hook 獲取下載資訊。")
+
+            video_format_info = self.last_downloaded_info
+            video_path = video_format_info['filepath']
             tmp_files.append(video_path)
-            self.log(f"開始下載影像: {video_format['format_id']} for '{base_info.get('title')}'")
-            self._download_stream(video_format['format_id'], video_path, base_info['webpage_url'])
-            self.log("影像下載完成。")
+            self.log(f"影像下載完成: {video_format_info.get('format')}")
+
+            # Download and merge audio tracks
             for task in tasks:
                 if self.stop_requested.is_set(): self.log("任務已中止。"); break
                 audio_id = task['audio_id']
-                audio_info = next((f for f in base_info['formats'] if f['format_id'] == audio_id), None)
-                audio_path = os.path.join(self.output_path.get(), f"__temp_audio.{audio_info['ext']}")
-                tmp_files.append(audio_path)
                 self.log(f"開始下載音軌: {audio_id} {task['suffix']}")
-                self._download_stream(audio_id, audio_path, base_info['webpage_url'])
-                self.log(f"音軌 {audio_id} 下載完成。")
-                output_filename = self.get_safe_filename(video_format, task['suffix'], self.container_var.get().lower(), base_info)
+                self._download_stream(audio_id, "__temp_audio", base_info['webpage_url'])
+
+                audio_path = self.last_downloaded_info['filepath']
+                tmp_files.append(audio_path)
+
+                output_filename = self.get_safe_filename(video_format_info, task['suffix'], self.container_var.get().lower(), base_info)
                 output_filepath = os.path.join(self.output_path.get(), output_filename)
                 self.log(f"開始合併為: {output_filename}")
                 command = ['ffmpeg', '-y', '-i', video_path, '-i', audio_path, '-c', 'copy', '-map', '0:v:0', '-map', '1:a:0', '-metadata:s:a:0', f"language={task['lang_tag']}", output_filepath]
@@ -312,20 +286,31 @@ class App(tk.Tk):
                 if process.returncode == 0: self.log(f"成功建立: {output_filename}")
                 else: self.log(f"錯誤: FFmpeg 合併失敗 (返回碼 {process.returncode})")
                 os.remove(audio_path); tmp_files.remove(audio_path)
-        except FileNotFoundError: self.worker_queue.put({'type': 'error', 'data': 'FFmpeg not found. Please install FFmpeg and ensure it is in your system\'s PATH.'})
+        except FileNotFoundError: self.worker_queue.put({'type': 'error', 'data': 'FFmpeg not found. 請安裝 FFmpeg 並將其加入系統 PATH 中。'})
         except Exception as e: self.worker_queue.put({'type': 'error', 'data': e})
         finally:
             for f in tmp_files:
                 if os.path.exists(f): os.remove(f)
 
-    def _download_stream(self, format_id, outpath, url):
+    def _download_stream(self, format_id_or_selector, out_template, url):
+        # Note: out_template is now a template name, not a full path
         ydl_opts = self.get_ydl_opts()
-        ydl_opts.update({'format': format_id, 'outtmpl': outpath, 'progress_hooks': [self.progress_hook], 'overwrites': True})
+        ydl_opts.update({
+            'format': format_id_or_selector,
+            'outtmpl': os.path.join(self.output_path.get(), f"{out_template}.%(ext)s"),
+            'progress_hooks': [self.progress_hook],
+            'overwrites': True
+        })
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([url])
+
     def progress_hook(self, d):
+        if d['status'] == 'finished':
+            self.last_downloaded_info = d['info_dict']
         if d['status'] == 'downloading':
-            percent = d.get('_percent_str', '0%').replace('%','').strip()
-            self.worker_queue.put({'type': 'progress', 'data': {'percent': float(percent)}})
+            percent_str = d.get('_percent_str', '0%').replace('%','').strip()
+            try: percent = float(percent_str)
+            except (ValueError, TypeError): percent = 0
+            self.worker_queue.put({'type': 'progress', 'data': {'percent': percent}})
 
     def process_worker_queue(self):
         try:
@@ -360,6 +345,5 @@ class App(tk.Tk):
 if __name__ == "__main__":
     app = App()
     style = ttk.Style(app)
-    # You can set a theme here if you have one, e.g., app.tk.call("source", "azure.tcl"); style.theme_use("azure-dark")
     style.configure("Accent.TButton", font=("Helvetica", 10, "bold"), padding=5)
     app.mainloop()
