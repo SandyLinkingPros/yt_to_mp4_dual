@@ -18,7 +18,7 @@ class ContextMenu:
         self.menu = tk.Menu(widget, tearoff=0)
         widget_type = widget.winfo_class()
         if widget_type in ('TEntry', 'Entry', 'ScrolledText'):
-            self.add_command("剪下", self.cut, '<<Cut>>', 'Ctrl+X'); self.add_command("複製", self.copy, '<<Copy>>', 'Ctrl+C'); self.add_command("貼上", self.paste, '<<Paste>>', 'Ctrl+V'); self.add_separator(); self.add_command("全選", self.select_all, '<<SelectAll>>', 'Ctrl+A'); self.add_command("清空", self.clear)
+            self.add_command("剪下", self.cut, '<<Cut>>', 'Ctrl-X'); self.add_command("複製", self.copy, '<<Copy>>', 'Ctrl-C'); self.add_command("貼上", self.paste, '<<Paste>>', 'Ctrl-V'); self.add_separator(); self.add_command("全選", self.select_all, '<<SelectAll>>', 'Ctrl-A'); self.add_command("清空", self.clear)
         elif widget_type == 'Treview':
             self.add_command("複製選取", self.copy_treeview_selection); self.add_separator(); self.add_command("全選", self.select_all_treeview)
         if widget_type == 'ScrolledText':
